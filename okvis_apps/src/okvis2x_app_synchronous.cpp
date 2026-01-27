@@ -62,13 +62,20 @@ int main(int argc, char **argv)
   const bool isDepth = parameters.lidar ? false : true;
   const bool isLidar = !isDepth;
   const bool isSubmapping = parameters.output.enable_submapping;
+  bool isRgb = false;
+  for(size_t i = 0; i < parameters.nCameraSystem.numCameras(); i++) {
+    if(parameters.nCameraSystem.cameraType(i).isColour) {
+      isRgb = true;
+      LOG(INFO) << "RGB camera detected at camera id " << i;
+    }
+  }
 
   // dataset reader
   std::string path(argv[3]);
   std::shared_ptr<okvis::XDatasetReader> datasetReader;
   okvis::Duration deltaT(0.0); // time tolerance to callbacks
   if (isSubmapping) {
-    datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, isLidar, false, isDepth));
+    datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, isLidar, false, isDepth, isRgb));
   }
   else {
     datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, false, false, false));

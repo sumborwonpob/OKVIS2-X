@@ -79,12 +79,20 @@ int main(int argc, char **argv)
     parameters.output.enable_submapping = true;
   }
 
+  bool isRgb = false;
+  for(size_t i = 0; i < parameters.nCameraSystem.numCameras(); i++) {
+    if(parameters.nCameraSystem.cameraType(i).isColour) {
+      isRgb = true;
+      LOG(INFO) << "RGB camera detected at camera id " << i;
+    }
+  }
+
   // dataset reader
   std::string path(argv[3]);
   std::shared_ptr<okvis::XDatasetReader> datasetReader;
   okvis::Duration deltaT(0.0); // time tolerance to callbacks
   #if defined(OKVIS_STEREO_NETWORK_PROCESSOR) || defined(OKVIS_DFUSION_NETWORK_PROCESSOR)
-  datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, false, true, false));
+  datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, false, true, false, isRgb));
   #elif defined(OKVIS_LANGUAGE_NETWORK_PROCESSOR)
   datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, false, true, true, true));
   #endif
