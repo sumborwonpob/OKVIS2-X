@@ -508,6 +508,14 @@ bool ThreadedSlam::processFrame() {
         gpsMeasurementsReceived_.PopBlocking(&gpsMeasurement);
     } // nothing else to do here for GPS
 
+
+    // Drop the initial depth measurements. Otherwise, the queue would be full.
+    // This leads to blocking the whole thread. 
+    while(!depthMeasurementsReceived_.Empty()
+      && depthMeasurementsReceived_.queue_.front().timeStamp < multiFrame->timestamp()){
+      depthMeasurementsReceived_.PopBlocking(&depthMeasurement);
+    }
+
     firstFrame_ = false;
   } else {
     // wait for next frame
@@ -1300,6 +1308,7 @@ void ThreadedSlam::stopThreading() {
   cameraMeasurementsReceived_.Shutdown();
   gpsMeasurementsReceived_.Shutdown();
   lidarMeasurementsReceived_.Shutdown();
+  depthMeasurementsReceived_.Shutdown();
   submapAlignmentFactorsReceived_.Shutdown();
   visualisationImages_.Shutdown();
   visualisationData_.Shutdown();
