@@ -647,12 +647,23 @@ namespace okvis {
                    [](const auto& face){
                      return face.colour.vertexes.has_value();
                     });
+      se::id::colour_mesh_by_id(filtered_mesh);
       if(filtered_mesh.size() > 0) {
         se::io::save_mesh(filtered_mesh, meshFilename, Eigen::Isometry3f(submapPose.T().cast<float>()));
       }
       else {
         se::io::save_mesh(mesh, meshFilename, Eigen::Isometry3f(submapPose.T().cast<float>()));
       }
+      if(objectMap_->numberOfObjects() == 0){
+        return;
+      }
+      auto& submap_objects = objectMap_->submapObjects(kfId);
+
+      if(submap_objects.size() > 0) {
+          colour_mesh_by_match(filtered_mesh, submap_objects, languageDescriptor_.normalized(), tinycolormap::ColormapType::Jet, 0.1, 0.5);
+          const std::string activationMeshFilename = meshesPath_ + "/activationMesh_kf" + mesh_numbering + ".ply";
+          se::io::save_mesh(filtered_mesh, activationMeshFilename, Eigen::Isometry3f(submapPose.T().cast<float>()));
+      }  
       #else
       se::io::save_mesh(mesh, meshFilename, Eigen::Isometry3f(submapPose.T().cast<float>()));   
       #endif
@@ -862,6 +873,7 @@ namespace okvis {
                     }
                   }
 
+
                   TimerSwitchable diWarp("8.5.2 -- warping");
                   // Register depth
                   cv::Mat warped_depth(depthData.second.measurement.depthImage.size(),
@@ -873,17 +885,140 @@ namespace okvis {
                   }
                   diWarp.stop();
 
-                  integrator.integrateDepth(
-                      integration_counter_,
-                      se::Measurements{se::Measurement{
-                                          depthMat2Image(depthData.second.measurement.depthImage),
-                                          (*cameraSensors_).at(depthImage_idx).second,
-                                          Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * depthData.first.matrix())},
-                                        se::Measurement<se::PinholeCamera, se::colour_t>{
-                                          rgbMat2Image(rgbData.second.measurement.image),
-                                          (*cameraSensors_).at(colourImage_idx).second,
-                                          Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * rgbData.first.matrix())}
-                                        });
+                  if(rgbData.second.measurement.deep_learning_data.find("language_features") != rgbData.second.measurement.deep_learning_data.end() &&
+                     rgbData.second.measurement.deep_learning_data.find("sam_masks") != rgbData.second.measurement.deep_learning_data.end()){
+
+                    #ifdef OKVIS_COLIDMAP
+                    // Raycast active submap to check for existing instances / objects
+                    // int raycast_width = rgbData.second.measurement.image.cols;
+                    // int raycast_height = rgbData.second.measurement.image.rows;
+                    //se::Image<Eigen::Vector3f> surface_point_cloud_W(raycast_width, raycast_height);
+                    //se::Image<Eigen::Vector3f> surface_normals_W(raycast_width, raycast_height);
+                    //se::Image<int8_t> surface_scale(raycast_width, raycast_height);
+
+                    TimerSwitchable diLookup("8.5.3 -- segment lookup");
+                    se::Image<se::id_t> surface_segment_id = se::raycaster::lookup_ids(activeMap,
+                            depthMat2Image(warped_depth),
+                            (*cameraSensors_).at(depthImage_idx).second,
+                            Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * rgbData.first.matrix()));
+                    diLookup.stop();
+
+                    // se::Image<se::RGB> colored_segments_before(surface_segment_id.width(), surface_segment_id.height());
+                    // for (size_t i = 0; i < colored_segments_before.size(); i++) {
+                    //   const se::RGB c = se::segment_id_colour(surface_segment_id[i]);
+                    //   colored_segments_before[i] = se::RGB{c.r, c.g, c.b};
+                    // }
+                    //cv::Mat lookup_image_before(colored_segments_before.height(), colored_segments_before.width(), CV_8UC3, colored_segments_before.data());
+                    //cv::cvtColor(lookup_image_before, lookup_image_before, cv::COLOR_RGB2BGR);
+
+                    // Get masks of invalid depth regions
+                    TimerSwitchable diInvalid("8.5.4 -- invalid mask");
+                    cv::Mat invalid_depth_mask(depthData.second.measurement.depthImage.rows,
+                                              depthData.second.measurement.depthImage.cols,
+                                              CV_8UC1, cv::Scalar(0));
+                    invalid_depth_mask.setTo(cv::Scalar(1), warped_depth < (*cameraSensors_).at(depthImage_idx).second.near_plane);
+                    invalid_depth_mask.setTo(cv::Scalar(1), warped_depth > (*cameraSensors_).at(depthImage_idx).second.far_plane);
+                    diInvalid.stop();
+
+                    // Do Matching of segments in current image and active Submap
+                    TimerSwitchable diUnique("8.5.5 -- unique segments");
+                    cv::Mat unique_segments = objectMap_->processData(prevKeyframeId_,
+                                                                    invalid_depth_mask,
+                                                                    rgbData.second.measurement.deep_learning_data["sam_masks"],
+                                                                    rgbData.second.measurement.deep_learning_data["language_features"],
+                                                                    surface_segment_id);
+                    se::Image<se::id_t> unique_segments_as_se_image(unique_segments.cols, unique_segments.rows, reinterpret_cast<se::id_t*>(unique_segments.data));
+                    diUnique.stop();
+
+
+                    TimerSwitchable diIntegrate("8.5.5 -- actual integration");
+                    // Now Integrate Depth, Color, as well as Segments
+                    integrator.integrateDepth(
+                        integration_counter_,
+                        se::Measurements{se::Measurement{
+                                            depthMat2Image(depthData.second.measurement.depthImage),
+                                            (*cameraSensors_).at(depthImage_idx).second,
+                                            Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * depthData.first.matrix())},
+                                          se::Measurement<se::PinholeCamera, se::colour_t>{
+                                            rgbMat2Image(rgbData.second.measurement.image),
+                                            (*cameraSensors_).at(colourImage_idx).second,
+                                            Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * rgbData.first.matrix())},
+                                          se::Measurement{unique_segments_as_se_image, (*cameraSensors_).at(colourImage_idx).second,
+                                            Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * rgbData.first.matrix())}
+                                          });
+
+                    // surface_segment_id = se::raycaster::lookup_ids(activeMap,
+                    //                                                depthMat2Image(warped_depth),
+                    //                                                (*cameraSensors_).at(depthImage_idx).second,
+                    //                                                Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * rgbData.first.matrix()));
+
+                    // if(submapConfig_.write_mesh_output) {
+                    //   // Save Input SAM Segmentation and look-up side-by-side
+                    //   cv::Mat input_output;
+
+                    //   // SAM
+                    //   unique_segments.setTo(cv::Scalar(0), invalid_depth_mask);
+                    //   se::Image<se::RGB> tmp(unique_segments.cols, unique_segments.rows);
+                    //   for (size_t i = 0; i < tmp.size(); i++) {
+                    //     const se::RGB c = se::segment_id_colour(unique_segments_as_se_image[i]);
+                    //     tmp[i] = se::RGB{c.r, c.g, c.b};
+                    //   }
+                    //   cv::Mat colored_sam_image(tmp.height(), tmp.width(), CV_8UC3, tmp.data());
+                    //   cv::cvtColor(colored_sam_image, colored_sam_image, cv::COLOR_RGB2BGR);
+
+                    //   // SE2 Lookup
+                    //   se::Image<se::RGB> colored_segments(surface_segment_id.width(), surface_segment_id.height());
+                    //   for (size_t i = 0; i < colored_segments.size(); i++) {
+                    //     const se::RGB c = se::segment_id_colour(surface_segment_id[i]);
+                    //     colored_segments[i] = se::RGB{c.r, c.g, c.b};
+                    //   }
+                    //   cv::Mat lookup_image(colored_segments.height(), colored_segments.width(), CV_8UC3, colored_segments.data());
+                    //   cv::cvtColor(lookup_image, lookup_image, cv::COLOR_RGB2BGR);
+
+                    //   cv::hconcat(colored_sam_image, lookup_image, input_output);
+                    //   cv::hconcat(lookup_image_before, input_output, input_output);
+                    //   cv::imwrite("/tmp/sam-se2-"+std::to_string(integration_counter_)+".png", input_output);
+                    //   cv::imwrite("/tmp/warped-depth-"+std::to_string(integration_counter_)+".png", 50.0*warped_depth);
+                    //   cv::imwrite("/tmp/original-depth-"+std::to_string(integration_counter_)+".png", 50.0*depthData.second.measurement.depthImage);
+                    //   cv::imwrite("/tmp/rgb-"+std::to_string(integration_counter_)+".png", rgbData.second.measurement.image);
+
+                    // }
+                    #else
+                      static bool dbg_message = true;
+                      if(dbg_message) {
+                        dbg_message = false;
+                        LOG(ERROR) << "Detected SAM and Language features but the map does not support it, doing normal integration." \
+                         "Please check the CMakeLists.txt OKVIS_COLIDMAP option in case this is not the desired usage";
+                      }
+                      TimerSwitchable diIntegrate("8.5.5 -- actual integration");
+                      integrator.integrateDepth(
+                          integration_counter_,
+                          se::Measurements{se::Measurement{
+                                              depthMat2Image(depthData.second.measurement.depthImage),
+                                              (*cameraSensors_).at(depthImage_idx).second,
+                                              Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * depthData.first.matrix())},
+                                            se::Measurement<se::PinholeCamera, se::colour_t>{
+                                              rgbMat2Image(rgbData.second.measurement.image),
+                                              (*cameraSensors_).at(colourImage_idx).second,
+                                              Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * rgbData.first.matrix())}
+                                            });
+                    #endif
+                    diIntegrate.stop();
+
+
+                  } else {
+                    integrator.integrateDepth(
+                        integration_counter_,
+                        se::Measurements{se::Measurement{
+                                            depthMat2Image(depthData.second.measurement.depthImage),
+                                            (*cameraSensors_).at(depthImage_idx).second,
+                                            Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * depthData.first.matrix())},
+                                          se::Measurement<se::PinholeCamera, se::colour_t>{
+                                            rgbMat2Image(rgbData.second.measurement.image),
+                                            (*cameraSensors_).at(colourImage_idx).second,
+                                            Eigen::Isometry3f(T_WK.inverse().T().cast<float>() * rgbData.first.matrix())}
+                                          });
+                  }
                   integration_counter_++;
                   numIntegratedDepthFrames_++;
                 }
@@ -921,6 +1056,11 @@ namespace okvis {
           if (fieldCallback_) {
             fieldCallback_(current_state, seSubmapLookup_);
           }
+
+          {
+            std::lock_guard _(language_embedding_mtx);
+            Descriptor ldesc = languageDescriptor_.normalized();
+          }
         
           if(create_new_submap && previousSubmapId_ != UNINITIALIZED_ID){
 
@@ -931,6 +1071,9 @@ namespace okvis {
             if(previousSubmapId_ != UNINITIALIZED_ID){
               // ToDo: mesh in asynchronous thread, not to block processing
               seMeshLookup_[previousSubmapId_] = seSubmapLookup_[previousSubmapId_].map->mesh();
+
+              // Finish Objects for completed submap, means coloring of mesh for text query and extracting poses
+              objectMap_->finishSubmapObjects(previousSubmapId_);
             }
 
 
@@ -978,8 +1121,13 @@ namespace okvis {
     void SubmappingInterface::saveAllSubmapMeshes(){
       LOG(INFO) << "There are " << seSubmapLookup_.size() << " submaps to save";
       for(auto it = seSubmapLookup_.begin(); it != seSubmapLookup_.end(); ++it){
-        saveSubmap(it->first);        
+        saveSubmap(it->first);
+        if(!objectMap_->saveObjects(it->first, meshesPath_, it->second.T_WK)) {
+          LOG(WARNING) << "Could not save object level data for map " << it->first;
+        }
+        
       }
+      LOG(INFO) << "A total number of " << objectMap_->numberOfObjects() << " exists across all submaps";
     }
 
     DepthFrame SubmappingInterface::depthMat2Image(const cv::Mat &inputDepth) {
@@ -1351,7 +1499,7 @@ namespace okvis {
       DLOG(INFO) << "publishing submaps";
 
       if (submapCallback_) {
-        submapCallback_(submapPoses, submaps);
+        submapCallback_(submapPoses, submaps, objectMap_);
       }
     }
     

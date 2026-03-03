@@ -386,6 +386,8 @@ You find examples for the datasets used in the paper in the respective subfolder
 
       git clone --recurse-submodules git@github.com:ethz-mrl/OKVIS2-X.git
 
+  Note: to successfully build and run the OKVIS2X nodes, you also need the following packages: `language_feature_node` , `language_feature_msgs` (all in our GitHub)
+
   You may want to run rosdep to make sure all dependencies are installed.
 
   Next, you can build:
@@ -428,18 +430,17 @@ You find examples for the datasets used in the paper in the respective subfolder
 
   There are two type of nodes: subscriber nodes and realsense nodes.
 
-  
-  For the subscriber nodes, there are 4 different modes: `lidar`, `depth_image` (ros2 topic providing depth images), `stereo_network` (Stereo Depth Prediction), `depth_fusion` (MVS Depth Fusion)
+  For the subscriber nodes, there are 5 different modes: `lidar`, `depth_image` (ros2 topic providing depth images), `stereo_network` (Stereo Depth Prediction), `depth_fusion` (MVS Depth Fusion), `vision_language` (FindAnything)
 
   ```bash
   ros2 launch okvis okvis2x_node_subscriber.launch.xml config_filename:=[config] se_config_filename:=[se2_config] \ 
-      [lidar/depth_image/stereo_network/depth_fusion]:=true
+      [lidar/depth_image/stereo_network/depth_fusion/vision_language]:=true
   ```
 
-  For the realsense nodes, there are 3 different modes: `depth_image` (ros2 topic providing depth images), `stereo_network` (Stereo Depth Prediction), `depth_fusion` (MVS Depth Fusion)
+  For the realsense nodes, there are 4 different modes: `depth_image` (ros2 topic providing depth images), `stereo_network` (Stereo Depth Prediction), `depth_fusion` (MVS Depth Fusion), `vision_language` (FindAnything)
   ```bash
   ros2 launch okvis okvis2x_node_realsense.launch.xml config_filename:=[config] se_config_filename:=[se2_config] \ 
-      [lidar/depth_image/stereo_network/depth_fusion]:=true
+      [lidar/depth_image/stereo_network/depth_fusion/vision_language]:=true
   ```
 
   For the VI-only mode (OKVIS2-X without submapping), please set `enable_submapping=false` in `[config]` and launch with `depth_image:=true`. This will fall back to OKVIS2.
@@ -455,6 +456,7 @@ You find examples for the datasets used in the paper in the respective subfolder
   ```bash
   ros2 service call /okvis/shutdown std_srvs/srv/SetBool
   ```
+  * To run the **FindAnything** nodes you need additionally the `language_feature_node` (for text queries) in your workspace: https://github.com/ethz-mrl/language_feature_node
 </details>
 
 

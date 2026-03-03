@@ -38,7 +38,9 @@
 #include <boost/filesystem.hpp>
 #include <okvis/SubmappingInterface.hpp>
 
-#if defined(OKVIS_STEREO_NETWORK_PROCESSOR)
+#if defined(OKVIS_LANGUAGE_NETWORK_PROCESSOR)
+#include <okvis/VisionLanguageProcessor.hpp>
+#elif defined(OKVIS_STEREO_NETWORK_PROCESSOR)
 #include <okvis/Stereo2DepthProcessor.hpp>
 #elif defined(OKVIS_DFUSION_NETWORK_PROCESSOR)
 #include <okvis/DepthFusionProcessor.hpp>
@@ -83,6 +85,8 @@ int main(int argc, char **argv)
   okvis::Duration deltaT(0.0); // time tolerance to callbacks
   #if defined(OKVIS_STEREO_NETWORK_PROCESSOR) || defined(OKVIS_DFUSION_NETWORK_PROCESSOR)
   datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, false, true, false));
+  #elif defined(OKVIS_LANGUAGE_NETWORK_PROCESSOR)
+  datasetReader.reset(new okvis::XDatasetReader(path, deltaT, parameters, false, true, true, true));
   #endif
 
   // also check DBoW2 vocabulary
@@ -128,6 +132,8 @@ int main(int argc, char **argv)
   processor.reset(new okvis::Stereo2DepthProcessor(parameters, dBowVocDir));
   #elif defined(OKVIS_DFUSION_NETWORK_PROCESSOR)
   processor.reset(new okvis::DepthFusionProcessor(parameters, dBowVocDir));
+  #elif defined(OKVIS_LANGUAGE_NETWORK_PROCESSOR)
+  processor.reset(new okvis::VLProcessor(parameters, dBowVocDir));
   #endif
                                               
   processor->setBlocking(true);
@@ -188,7 +194,7 @@ int main(int argc, char **argv)
   datasetReader->setImagesNetworkCallback(
         std::bind(&okvis::DeepLearningProcessor::addImages, processor, std::placeholders::_1,
                   std::placeholders::_2));
-  #if defined(OKVIS_STEREO_NETWORK_PROCESSOR)
+  #if defined(OKVIS_STEREO_NETWORK_PROCESSOR) || defined(OKVIS_LANGUAGE_NETWORK_PROCESSOR)
   processor->setImageCallback([&] (std::map<size_t, std::vector<okvis::CameraMeasurement>>& frames){
     bool estimatorAdd = false;
     bool mapAdd = false;
@@ -287,6 +293,25 @@ int main(int argc, char **argv)
         cv::hconcat(visSigma, invSigmaOutput);
         cv::vconcat(invDepthOutput, invSigmaOutput, networkOutput);
         cv::imshow("Depth stereo/mvs/fuse; Inverse depth sigma stereo/mvs/fuse", networkOutput);
+      }
+      #elif defined(OKVIS_LANGUAGE_NETWORK_PROCESSOR)
+      std::map<std::string, cv::Mat> images;
+      processor->display(images);
+      cv::Mat display;
+      for(const auto& image : images) {
+        if(image.first != "language_rgb") {
+          if(display.empty()) {
+            display = image.second;
+          } else {
+            cv::hconcat(display, image.second, display);
+          }
+        }
+      }
+      if(!display.empty()) {
+        cv::imshow("RGB images display", display);
+      } 
+      if (images.find("language_rgb") != images.end()) {
+        cv::imshow("Language activations", images["language_rgb"]);
       }
       #endif
       

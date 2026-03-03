@@ -17,6 +17,7 @@
 #include <okvis/VoxelGridFilter.hpp>
 #include <okvis/SubmappingUtils.hpp>
 #include <okvis/mapTypedefs.hpp>
+#include <okvis/ObjectMapping.hpp>
 #include <Eigen/StdVector>
 
 
@@ -155,7 +156,8 @@ namespace okvis {
 
     typedef okvis::threadsafe::Queue<SupereightFrames, Eigen::aligned_allocator<SupereightFrames>> SupereightFrameQueue;
     typedef std::function<void(AlignedUnorderedMap<uint64_t, Transformation>,
-                               std::unordered_map<uint64_t, std::shared_ptr<SupereightMapType>>)> submapCallback;
+                               std::unordered_map<uint64_t, std::shared_ptr<SupereightMapType>>,
+                               std::shared_ptr<okvis::ObjectMap>)> submapCallback;
     typedef std::function<void(const State&,
                                const AlignedUnorderedMap<uint64_t, se::Submap<SupereightMapType>>&)> fieldCallback;
     typedef std::function<void(const okvis::State&, const AlignedVector<Eigen::Matrix4f>&, const std::vector<uint64_t>&, const size_t)> trajectoryAnchoringCallback;
@@ -262,7 +264,11 @@ namespace okvis {
             lidarSensors_ = std::pair<okvis::kinematics::Transformation, se::Lidar>(std::make_pair((*parameters.lidar).T_SL,
                                                                                                          se::Lidar(lidarConfig)));
           }
-          trajectoryLocked_ = false;  
+          trajectoryLocked_ = false;
+
+          // Initialize Object Map
+          objectMap_.reset(new okvis::ObjectMap(seSubmapLookup_, seMeshLookup_));
+  
         };
 
         /**
@@ -441,6 +447,8 @@ namespace okvis {
         AlignedUnorderedMap<uint64_t, se::Submap<SupereightMapType>> seSubmapLookup_; // Use this to access submaps and their poses
         AlignedUnorderedMap<uint64_t, Eigen::Matrix<float, 6, 1>> submapDimensionLookup_; // use this when reindexing maps on loop closures (index,dims)
 
+        // VL Features and segment mapping
+        std::shared_ptr<okvis::ObjectMap> objectMap_;
         AlignedUnorderedMap<uint64_t, se::TriangleMesh<SupereightMapType::DataType::col_,SupereightMapType::DataType::id_>> seMeshLookup_; ///< Lookup for meshes, need to be stored here to use them for Feature Thing v2
 
         /**
@@ -464,6 +472,8 @@ namespace okvis {
             std::lock_guard<std::mutex> l(finishMutex_);
             isFinished_ = true;
             seMeshLookup_[prevKeyframeId_] = seSubmapLookup_[prevKeyframeId_].map->mesh();
+            // Finish Objects for completed submap, means coloring of mesh for text query and extracting poses
+            objectMap_->finishSubmapObjects(prevKeyframeId_);
             return;
         }
 
@@ -479,6 +489,12 @@ namespace okvis {
 
         void setAlignCallback(const AlignCallback& alignCallback) {
           alignCallback_ = alignCallback;
+        }
+
+        void setLanguageEmbedding(const Descriptor& languageDescriptor) {
+          std::lock_guard _(language_embedding_mtx);
+          languageDescriptor_ = languageDescriptor;
+          has_language_ = true;
         }
 
         /**
@@ -820,6 +836,10 @@ namespace okvis {
         State latestState_;
         TrackingState latestTrackingState_;
         std::mutex state_mtx_;
+
+        Descriptor languageDescriptor_;
+        std::atomic_bool has_language_ = false;
+        std::mutex language_embedding_mtx;
 
         size_t last_integrated_state_;
 

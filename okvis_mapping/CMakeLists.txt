@@ -8,6 +8,7 @@ add_library(${LIB_NAME}
   src/VoxelGridFilter.cpp
   src/SubmappingUtils.cpp
   src/LidarMotionUndistortion.cpp
+  src/ObjectMapping.cpp
 )
 target_include_directories(${LIB_NAME}
   PUBLIC
@@ -57,6 +58,7 @@ if(BUILD_TESTS)
         add_executable(${PROJECT_TEST_NAME}
                 test/runTests.cpp
                 test/voxelGridTests.cpp
+                test/objectMappingTests.cpp
         )
         target_link_libraries(${PROJECT_TEST_NAME}
                 ${LIB_NAME}
