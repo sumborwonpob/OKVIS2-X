@@ -704,8 +704,8 @@ namespace okvis {
         /**
          * @brief Update SubmapAlignBlock_ from incoming lidar measurements.
         */
-        void updateLidarAlignBlock(const RayVector& vecRayMeasurements,
-          const kinematics::Transformation& T_WK, RayVector& vecRayMeasurementsToIntegrate);
+        void updateLidarAlignBlock(RayVector& vecRayMeasurements,
+                                   const kinematics::Transformation& T_WK);
         
         SupereightMapType::Config mapConfig_;       ///< Supereight Map config
         SupereightMapType::DataConfigType dataConfig_; ///< Supereight Data config

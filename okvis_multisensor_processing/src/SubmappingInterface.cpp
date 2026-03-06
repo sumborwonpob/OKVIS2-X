@@ -774,15 +774,13 @@ namespace okvis {
           if(lidarSensors_ && supereightFrame.vecRayMeasurements.size() > 0 && supereightFrames_.Size() <= 1){
             // Here prevKeyframeId_ will always be the current active submap
             okvis::kinematics::Transformation T_WK(seSubmapLookup_[prevKeyframeId_].T_WK.matrix().cast<double>());
-            RayVector vecRayMeasurementsToIntegrate;
-
-            updateLidarAlignBlock(supereightFrame.vecRayMeasurements, T_WK, vecRayMeasurementsToIntegrate);
-
+            TimerSwitchable prepareInput("9.2.0 SE2 LiDAR prepare input");
+            updateLidarAlignBlock(supereightFrame.vecRayMeasurements, T_WK);
+            prepareInput.stop();
             // Now we transform the measurements into the map frame for integration
             if(integrationPublishCallback_) integrationPublishCallback_(supereightFrame.vecRayMeasurements);
-
             TimerSwitchable actualIntegrationTimer("9.2.1 Actual lidar integration");
-            integrator.integrateRayBatch(integration_counter_, vecRayMeasurementsToIntegrate, (*lidarSensors_).second);
+            integrator.integrateRayBatch(integration_counter_, supereightFrame.vecRayMeasurements, (*lidarSensors_).second);
             actualIntegrationTimer.stop();
             numIntegratedLidarFrames_++;
             integration_counter_++;
@@ -1909,37 +1907,44 @@ namespace okvis {
   }
 
 
-  void SubmappingInterface::updateLidarAlignBlock(const RayVector& vecRayMeasurements,
-    const kinematics::Transformation& T_WK, RayVector& vecRayMeasurementsToIntegrate) {
-
-    size_t numRays = vecRayMeasurements.size();
-
+  void SubmappingInterface::updateLidarAlignBlock(RayVector& vecRayMeasurements,
+                                                  const kinematics::Transformation& T_WK) {
     // Measurements in SE Frame are pairs of T_WL (lidar in world frame), r_L (ray in lidar frame)
     // for integration as well as for map-to-map factors, points have to be relative to the submap frame
-    vecRayMeasurementsToIntegrate.resize(numRays);
-
-    // Only Rays have to be kept for submap alignment
     std::vector<Eigen::Vector3d, Eigen::aligned_allocator<Eigen::Vector3d>> onlyRays;
-    if(submapConfig_.useMap2MapFactors){
-      onlyRays.reserve(numRays);
+    if(submapConfig_.useMap2MapFactors) {
+      onlyRays.reserve(vecRayMeasurements.size());
     }
 
-    // Now go through measurements and transform from LiDAR frame into submap frame
-    for(size_t i = 0; i < numRays; i++){
-      // LiDAR-to-submap transformation 
-      Eigen::Isometry3f T_KL(Eigen::Isometry3f(T_WK.inverse().T().cast<float>()) * vecRayMeasurements[i].first.cast<float>());
-      vecRayMeasurementsToIntegrate[i] = 
-              std::pair<Eigen::Isometry3f, Eigen::Vector3f> (T_KL, vecRayMeasurements[i].second.cast<float>());
-      if(submapConfig_.useMap2MapFactors){
-        onlyRays.push_back(T_KL.cast<double>() * vecRayMeasurements[i].second.cast<double>());
+
+    std::unordered_set<Voxel, VoxelHash> allocatedVoxels; // ToDo: Aligned Allocator needed here?
+    allocatedVoxels.reserve(vecRayMeasurements.size());
+    size_t write_idx=0;
+    Eigen::Isometry3f T_KW(T_WK.inverse().T().cast<float>());
+    Eigen::Isometry3f T_KL;
+    Eigen::Vector3f point_K;
+
+    for(const auto &rayMeasurement : vecRayMeasurements){
+      // This seems to assume a world-aligned (0-based) voxel grid
+      T_KL = T_KW * rayMeasurement.first;
+      point_K = T_KL * rayMeasurement.second;
+
+      const auto voxel = Voxel((point_K / (mapConfig_.res / 2.0f)).cast<int>());
+      if(allocatedVoxels.insert(voxel).second){
+        vecRayMeasurements[write_idx++] = std::pair<Eigen::Isometry3f, Eigen::Vector3f>(T_KL, rayMeasurement.second);
+        if(submapConfig_.useMap2MapFactors){
+          onlyRays.push_back(point_K.cast<double>());
+        }
       }
-    }
+    } 
+
+    vecRayMeasurements.resize(write_idx);
 
     // If points used for submap alignment add them to the hash map
     size_t n_points = onlyRays.size();
     if(n_points > 0){
       submapAlignBlock_.voxelHashMap.AddPoints(onlyRays);
-      }
+    }
   }
 
 }
