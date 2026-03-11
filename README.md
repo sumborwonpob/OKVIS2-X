@@ -234,7 +234,7 @@ To run a synchronous processing of datasets (as used for the paper results), the
 * `okvis2x_app_synchronous`: Runs OKVIS2-X with dense mapping either based on provided depth images or LiDAR measurements
 * `okvis2x_app_snetwork_synchronous`: Runs OKVIS2-X with dense mapping based on Depth Prediction from the Stereo Network
 * `okvis2x_app_depthfusion_synchronous`: Runs OKVIS2-X with dense mapping based on Depth Fusion (adding MVS network)
-* `okvis2x_app_language_synchronous`: FindAnything
+* `okvis2x_app_language_synchronous`: FindAnything (see [here](eval/findanything/replica/) for evaluation details)
 
 The apps can be run as follows:
 ```bash
