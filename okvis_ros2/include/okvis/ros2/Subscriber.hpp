@@ -32,8 +32,18 @@
   #include <cv_bridge/cv_bridge.h> // ros2 changed to .hpp some point...
 #endif
 #include <sensor_msgs/msg/image.hpp>
+#include <sensor_msgs/msg/compressed_image.hpp>
 #include <sensor_msgs/msg/imu.hpp>
 #include <std_msgs/msg/bool.hpp>
+
+// Conditional include for Livox custom message
+#ifndef USE_LIVOX_CUSTOM_MSG
+#define USE_LIVOX_CUSTOM_MSG 1
+#endif
+
+#if USE_LIVOX_CUSTOM_MSG
+#include <livox_ros_driver2/msg/custom_msg.hpp>
+#endif
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Woverloaded-virtual"
 #include <opencv2/opencv.hpp>
@@ -96,6 +106,10 @@ class Subscriber
   void imageCallback(const sensor_msgs::msg::Image::ConstSharedPtr& msg,
                      unsigned int cameraIndex, bool isColour = false);
 
+  /// @brief The compressed image callback.
+  void compressedImageCallback(const sensor_msgs::msg::CompressedImage::ConstSharedPtr& msg,
+                               unsigned int cameraIndex, bool isColour = false);
+
   /// @brief The IMU callback.
   void imuCallback(const sensor_msgs::msg::Imu& msg);
 
@@ -104,9 +118,20 @@ class Subscriber
   /// @param cameraIndex the index of the depth cmera, which will make it associated to one of the stereo cameras
   void depthCallback(const sensor_msgs::msg::Image::ConstSharedPtr& msg, unsigned int cameraIndex);
 
+  /// @brief The compressed depth image callback
+  /// @param msg the compressed depth image ROS message
+  /// @param cameraIndex the index of the depth camera, which will make it associated to one of the stereo cameras
+  void compressedDepthCallback(const sensor_msgs::msg::CompressedImage::ConstSharedPtr& msg, unsigned int cameraIndex);
+
   /// @brief The lidar sensor callback
   /// @param msg the lidar sensor ROS message
   void lidarCallback(const sensor_msgs::msg::PointCloud2& msg);
+
+#if USE_LIVOX_CUSTOM_MSG
+  /// @brief The Livox custom message callback
+  /// @param msg the Livox custom message
+  void livoxCustomCallback(const livox_ros_driver2::msg::CustomMsg::SharedPtr msg);
+#endif
 
   /// @brief function that performs the synchronization of the different ir and depth images for the slam system
   void synchronizeData();
@@ -117,9 +142,14 @@ class Subscriber
   std::shared_ptr<rclcpp::Node> node_; ///< The node handle.
   std::shared_ptr<image_transport::ImageTransport> imgTransport_; ///< The image transport.
   std::vector<image_transport::Subscriber> imageSubscribers_; ///< The image message subscriber.
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr> compressedImageSubscribers_; ///< The compressed image message subscriber.
   std::vector<image_transport::Subscriber> depthImageSubscribers_; ///< The depth image message subscriber
+  std::vector<rclcpp::Subscription<sensor_msgs::msg::CompressedImage>::SharedPtr> compressedDepthImageSubscribers_; ///< The compressed depth image message subscriber
   rclcpp::Subscription<sensor_msgs::msg::Imu>::SharedPtr subImu_;  ///< The IMU message subscriber.
   rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr subLiDAR_;  ///< The LiDAR message subscriber.
+#if USE_LIVOX_CUSTOM_MSG
+  rclcpp::Subscription<livox_ros_driver2::msg::CustomMsg>::SharedPtr subLivoxCustom_;  ///< The Livox custom message subscriber.
+#endif
   std::mutex time_mutex_; ///< Lock when accessing time
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr gtPoses_;

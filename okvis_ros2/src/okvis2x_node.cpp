@@ -245,8 +245,17 @@ int main(int argc, char **argv) {
   #else
     std::shared_ptr<okvis::Subscriber> subscriber;
     if(parameters.output.enable_submapping){
-      const bool isDepth = parameters.lidar ? false : true;
-      const bool isLidar = !isDepth;
+      bool hasDepthCamera = false;
+      for (size_t camIdx = 0; camIdx < parameters.nCameraSystem.numCameras(); ++camIdx) {
+        if (parameters.nCameraSystem.isDepthCamera(camIdx)) {
+          hasDepthCamera = true;
+          break;
+        }
+      }
+
+      const bool isLidar = static_cast<bool>(parameters.lidar);
+      const bool isDepth = hasDepthCamera && !isLidar;
+
       seInterface.reset(new okvis::SubmappingInterface(mapConfig, dataConfig, submapConfig, parameters));
       seInterface->setT_BS(parameters.imu.T_BS);
       seInterface->setBlocking(false);
@@ -273,6 +282,17 @@ int main(int argc, char **argv) {
         publisher.publishEstimatorUpdate(_1,_2,_3,_4);
         seInterface->stateUpdateCallback(_1,_2,_3);
       });
+
+      seInterface->setOdometryPublishingRate(imu_propagated_state_publishing_rate);
+      seInterface->setRealtimePublishCallback(
+        [&publisher](const okvis::Time& time,
+                     const Eigen::Vector3d& position,
+                     const Eigen::Quaterniond& orientation,
+                     const Eigen::Vector3d& linear_velocity,
+                     const Eigen::Vector3d& angular_velocity) {
+          publisher.publishRealTimePropagation(
+            time, position, orientation, linear_velocity, angular_velocity);
+        });
 
       estimator.setAlignmentPublishCallback([&](const okvis::Time& timestamp, const okvis::kinematics::Transformation& T_WS,
         const std::vector<Eigen::Vector3f, Eigen::aligned_allocator<Eigen::Vector3f>>& alignPointCloud, bool isMapFrame)
@@ -333,9 +353,12 @@ int main(int argc, char **argv) {
     threadedImagePublisher->startThread();
     threadedPublisher->startThread();
 
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+
     // Main loop
     while (true) {
-      rclcpp::spin_some(node);
+      executor.spin_some();
       estimator.processFrame();
       std::map<std::string, cv::Mat> images;
       estimator.display(images);
@@ -344,6 +367,8 @@ int main(int argc, char **argv) {
         break;
       }
     }
+
+    executor.remove_node(node);
 
     #ifdef SRL_NAV_USE_REALSENSE
       // Stop the pipeline

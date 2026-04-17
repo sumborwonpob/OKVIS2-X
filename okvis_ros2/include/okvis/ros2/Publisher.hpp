@@ -96,6 +96,9 @@ class Publisher
    */
   void setBodyTransform(const okvis::kinematics::Transformation& T_BS);
 
+  /// @brief Enable or disable publishing TransformStamped messages.
+  void setTfPublishing(bool publishTf) { publishTf_ = publishTf; }
+
   /**
    * @brief Set the realtime publishing rate.
    * @param odometryPublishingRate The rate.
@@ -218,6 +221,8 @@ class Publisher
   okvis::ThreadedPublisher::PublisherHandle<sensor_msgs::msg::PointCloud2> pubPointsMatched_;
   /// \brief The publisher for the odometry.
   okvis::ThreadedPublisher::PublisherHandle<nav_msgs::msg::Odometry> pubObometry_;
+  /// \brief The publisher for the pose stamped output.
+  okvis::ThreadedPublisher::PublisherHandle<geometry_msgs::msg::PoseStamped> pubPoseStamped_;
   /// \brief The publisher for the path.
   okvis::ThreadedPublisher::PublisherHandle<visualization_msgs::msg::Marker> pubPath_;
   /// \brief The publisher for the transform.
@@ -253,6 +258,9 @@ class Publisher
   nav_msgs::msg::Path path_; ///< The path message.
   Eigen::Matrix4d T_SC_; // Tf from Sensor to Camera
   Eigen::Quaterniond q_sc_;
+  bool publishOdometry_ = true; ///< Whether Odometry messages should be published.
+  bool publishPoseStamped_ = true; ///< Whether PoseStamped messages should be published.
+  bool publishTf_ = true; ///< Whether TransformStamped messages should be published.
   
   nav_msgs::msg::Odometry lastOdom_; ///< Last odometry message.
 

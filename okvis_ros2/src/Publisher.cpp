@@ -30,6 +30,26 @@
 /// \brief okvis Main namespace of this package.
 namespace okvis {
 
+namespace {
+
+std::shared_ptr<geometry_msgs::msg::PoseStamped> makePoseStamped(
+    const std_msgs::msg::Header & header,
+    const Eigen::Vector3d & position,
+    const Eigen::Quaterniond & orientation) {
+  auto poseMsg = std::make_shared<geometry_msgs::msg::PoseStamped>();
+  poseMsg->header = header;
+  poseMsg->pose.position.x = position.x();
+  poseMsg->pose.position.y = position.y();
+  poseMsg->pose.position.z = position.z();
+  poseMsg->pose.orientation.x = orientation.x();
+  poseMsg->pose.orientation.y = orientation.y();
+  poseMsg->pose.orientation.z = orientation.z();
+  poseMsg->pose.orientation.w = orientation.w();
+  return poseMsg;
+}
+
+}  // namespace
+
 // Default constructor.
 Publisher::Publisher(
   std::shared_ptr<rclcpp::Node> node,
@@ -51,11 +71,25 @@ void Publisher::setupNode(std::shared_ptr<rclcpp::Node> node)
   // set up node
   node_ = node;
 
+  node_->declare_parameter("publish_odometry", true);
+  node_->get_parameter("publish_odometry", publishOdometry_);
+  node_->declare_parameter("publish_pose_stamped", true);
+  node_->get_parameter("publish_pose_stamped", publishPoseStamped_);
+  node_->declare_parameter("publish_tf", true);
+  node_->get_parameter("publish_tf", publishTf_);
+
   // set up publishers
   slice_pub_ =              threadedPublisher_->registerPublisher<visualization_msgs::msg::Marker>("se_map_slice");
-  pubObometry_ =            threadedOdometryPublisher_->registerPublisher<nav_msgs::msg::Odometry>("okvis_odometry");
+  if (publishOdometry_) {
+    pubObometry_ =          threadedOdometryPublisher_->registerPublisher<nav_msgs::msg::Odometry>("okvis_odometry");
+  }
+  if (publishPoseStamped_) {
+    pubPoseStamped_ =       threadedOdometryPublisher_->registerPublisher<geometry_msgs::msg::PoseStamped>("okvis_pose_stamped");
+  }
   pubPath_ =                threadedPublisher_->registerPublisher<visualization_msgs::msg::Marker>("okvis_path");
-  pubTransform_ =           threadedPublisher_->registerPublisher<geometry_msgs::msg::TransformStamped>("okvis_transform");
+  if (publishTf_) {
+    pubTransform_ =         threadedPublisher_->registerPublisher<geometry_msgs::msg::TransformStamped>("okvis_transform");
+  }
   pubMesh_ =                threadedPublisher_->registerPublisher<visualization_msgs::msg::Marker>("okvis_mesh");
   pubSubmapMesh_ =          threadedPublisher_->registerPublisher<visualization_msgs::msg::MarkerArray>("okvis_submap_mesh");
   pubPointsMatched_ =       threadedPublisher_->registerPublisher<sensor_msgs::msg::PointCloud2>("okvis_points_matched");
@@ -195,8 +229,13 @@ bool Publisher::realtimePredictAndPublish(const okvis::Time& stamp,
   odometryMsg->twist.twist.angular.y = omega_B[1];
   odometryMsg->twist.twist.angular.z = omega_B[2];
 
-  // publish odometry
-  pubObometry_.publish(odometryMsg);
+  if (publishOdometry_) {
+    pubObometry_.publish(odometryMsg);
+  }
+  if (publishPoseStamped_) {
+    auto poseMsg = makePoseStamped(odometryMsg->header, r, q);
+    pubPoseStamped_.publish(poseMsg);
+  }
   return true;
 }
 
@@ -236,7 +275,9 @@ void Publisher::publishEstimatorUpdate(
   poseMsg->transform.translation.z = r[2];
 
   // publish current pose
-  pubTransform_.publish(poseMsg);
+  if (publishTf_) {
+    pubTransform_.publish(poseMsg);
+  }
 
   // also do the mesh
   meshMsg_->header.frame_id = "world";
@@ -282,7 +323,9 @@ void Publisher::publishEstimatorUpdate(
     updatedStatePoseMsg->transform.translation.z = T_WB.r()[2];
 
     // publish
-    pubTransform_.publish(updatedStatePoseMsg);
+    if (publishTf_) {
+      pubTransform_.publish(updatedStatePoseMsg);
+    }
   }
 
   // update Trajectory object
@@ -814,8 +857,13 @@ void Publisher::publishRealTimePropagation(const okvis::Time& time, const Eigen:
   odometryMsg->twist.twist.angular.y = angular_velocity[1];
   odometryMsg->twist.twist.angular.z = angular_velocity[2];
 
-  // publish odometry
-  pubObometry_.publish(odometryMsg);
+  if (publishOdometry_) {
+    pubObometry_.publish(odometryMsg);
+  }
+  if (publishPoseStamped_) {
+    auto poseMsg = makePoseStamped(odometryMsg->header, position, orientation);
+    pubPoseStamped_.publish(poseMsg);
+  }
   lastOdom_ = *odometryMsg;
 }
 

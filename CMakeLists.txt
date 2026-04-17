@@ -15,9 +15,9 @@ option (BUILD_TESTS
 option (BUILD_ROS2
         "Builds ros2 wrapper" ON)
 option (HAVE_LIBREALSENSE
-        "Use realsense as part of okvis" ON)
+        "Use realsense as part of okvis" OFF)
 option (USE_NN
-        "Use keypoint classification as part of okvis, requires torch" ON)
+        "Use keypoint classification as part of okvis, requires torch" OFF)
 option (USE_GPU
         "Use keypoint classification with GPU inference, requires torch with Cuda" OFF)
 option (DO_TIMING
@@ -473,6 +473,7 @@ if(BUILD_ROS2)
   find_package(sensor_msgs REQUIRED)
   find_package(visualization_msgs REQUIRED)
   find_package(nav_msgs REQUIRED)
+  find_package(livox_ros_driver2 QUIET)
   find_package(Boost REQUIRED)
   find_package(tf2_eigen REQUIRED)
   find_package(tf2_geometry_msgs REQUIRED)
@@ -571,6 +572,12 @@ if(BUILD_ROS2)
     tf2_eigen
     tf2_geometry_msgs
   )
+
+  # Add livox_ros_driver2 if available
+  if(livox_ros_driver2_FOUND)
+    ament_target_dependencies(${LIB_NAME} livox_ros_driver2)
+    target_compile_definitions(${LIB_NAME} PRIVATE LIVOX_ROS_DRIVER2_AVAILABLE)
+  endif()
 
   # export dependencies
   ament_export_dependencies(
