@@ -25,7 +25,7 @@ option (DO_TIMING
 option (BUILD_SHARED_LIBS
         "Whether to build okvis as a shared library" OFF)
 
-option (USE_COLIDMAP "Whether to build okvis supportin colour and object's id 'for language based OKVIS' or regular one" ON)
+option (USE_COLIDMAP "Whether to build okvis supportin colour and object's id 'for language based OKVIS' or regular one" OFF)
 
 set(OKVIS_CXX_STANDARD 17)
 set(OKVIS_PUBLIC_CXX_FLAGS)
@@ -469,7 +469,7 @@ if(BUILD_ROS2)
   find_package(cv_bridge REQUIRED)
   find_package(std_srvs REQUIRED)
   find_package(std_msgs REQUIRED)
-  find_package(language_feature_msgs REQUIRED)
+  #find_package(language_feature_msgs REQUIRED)
   find_package(sensor_msgs REQUIRED)
   find_package(visualization_msgs REQUIRED)
   find_package(nav_msgs REQUIRED)
@@ -560,7 +560,7 @@ if(BUILD_ROS2)
     Eigen3
     sensor_msgs
     visualization_msgs
-    language_feature_msgs
+    #language_feature_msgs
     std_srvs
     nav_msgs
     pcl_conversions
