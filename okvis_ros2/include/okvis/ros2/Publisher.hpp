@@ -21,6 +21,7 @@
 #define INCLUDE_OKVIS_ROS2_PUBLISHER_HPP_
 
 #include <memory>
+#include <unordered_map>
 
 #if __has_include(<cv_bridge/cv_bridge.hpp>) // requires GCC >= 5
 #include <cv_bridge/cv_bridge.hpp>
@@ -224,7 +225,9 @@ class Publisher
   /// \brief The publisher for the pose stamped output.
   okvis::ThreadedPublisher::PublisherHandle<geometry_msgs::msg::PoseStamped> pubPoseStamped_;
   /// \brief The publisher for the path.
-  okvis::ThreadedPublisher::PublisherHandle<visualization_msgs::msg::Marker> pubPath_;
+  okvis::ThreadedPublisher::PublisherHandle<nav_msgs::msg::Path> pubPath_;
+  /// \brief The publisher for loop closure markers.
+  okvis::ThreadedPublisher::PublisherHandle<visualization_msgs::msg::Marker> pubLoopClosureMarker_;
   /// \brief The publisher for the transform.
   okvis::ThreadedPublisher::PublisherHandle<geometry_msgs::msg::TransformStamped> pubTransform_;
   /// \brief The publisher for a robot / camera mesh.
@@ -276,6 +279,14 @@ class Publisher
   // Vision-Language Query Related Members
   Descriptor text_embedding_vector_; ///< Text embedding vector.
   std::string publishMode_ = "Colors"; ///< Mode which meshes are published: RGB ("Colors") | Text Query ("Activations")
+
+  struct PendingLoopClosureMarker {
+    okvis::Time timestamp;
+    okvis::kinematics::Transformation triggerPose_WB;
+  };
+
+  std::unordered_map<uint64_t, okvis::kinematics::Transformation> lastPublishedBodyPoses_; ///< Last published body poses keyed by state ID.
+  std::unordered_map<uint64_t, PendingLoopClosureMarker> pendingLoopClosureMarkers_; ///< Pending loop-closure markers keyed by trigger state ID.
 
   float mesh_cutoff_z_ = std::numeric_limits<float>::max(); ///< z cutoff value for visualisation
 };

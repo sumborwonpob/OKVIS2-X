@@ -32,6 +32,10 @@ namespace okvis {
 
 namespace {
 
+int markerIdFromStateId(const okvis::StateId& id) {
+  return static_cast<int>(id.value() & 0x7fffffff);
+}
+
 std::shared_ptr<geometry_msgs::msg::PoseStamped> makePoseStamped(
     const std_msgs::msg::Header & header,
     const Eigen::Vector3d & position,
@@ -46,6 +50,38 @@ std::shared_ptr<geometry_msgs::msg::PoseStamped> makePoseStamped(
   poseMsg->pose.orientation.z = orientation.z();
   poseMsg->pose.orientation.w = orientation.w();
   return poseMsg;
+}
+
+std::shared_ptr<visualization_msgs::msg::Marker> makeArrowMarker(
+    const std_msgs::msg::Header& header,
+    const std::string& markerNamespace,
+    const okvis::StateId& stateId,
+    const okvis::kinematics::Transformation& T_WB,
+    float red,
+    float green,
+    float blue) {
+  auto markerMsg = std::make_shared<visualization_msgs::msg::Marker>();
+  markerMsg->header = header;
+  markerMsg->ns = markerNamespace;
+  markerMsg->id = markerIdFromStateId(stateId);
+  markerMsg->type = visualization_msgs::msg::Marker::ARROW;
+  markerMsg->action = visualization_msgs::msg::Marker::ADD;
+  markerMsg->pose.position.x = T_WB.r().x();
+  markerMsg->pose.position.y = T_WB.r().y();
+  markerMsg->pose.position.z = T_WB.r().z();
+  markerMsg->pose.orientation.x = T_WB.q().x();
+  markerMsg->pose.orientation.y = T_WB.q().y();
+  markerMsg->pose.orientation.z = T_WB.q().z();
+  markerMsg->pose.orientation.w = T_WB.q().w();
+  markerMsg->scale.x = 0.45;
+  markerMsg->scale.y = 0.08;
+  markerMsg->scale.z = 0.12;
+  markerMsg->color.r = red;
+  markerMsg->color.g = green;
+  markerMsg->color.b = blue;
+  markerMsg->color.a = 1.0;
+  markerMsg->lifetime = rclcpp::Duration::from_seconds(0.0);
+  return markerMsg;
 }
 
 }  // namespace
@@ -86,7 +122,8 @@ void Publisher::setupNode(std::shared_ptr<rclcpp::Node> node)
   if (publishPoseStamped_) {
     pubPoseStamped_ =       threadedOdometryPublisher_->registerPublisher<geometry_msgs::msg::PoseStamped>("okvis_pose_stamped");
   }
-  pubPath_ =                threadedPublisher_->registerPublisher<visualization_msgs::msg::Marker>("okvis_path");
+  pubPath_ =                threadedPublisher_->registerPublisher<nav_msgs::msg::Path>("okvis_path");
+  pubLoopClosureMarker_ =   threadedPublisher_->registerPublisher<visualization_msgs::msg::Marker>("okvis_loop_closure_marker");
   if (publishTf_) {
     pubTransform_ =         threadedPublisher_->registerPublisher<geometry_msgs::msg::TransformStamped>("okvis_transform");
   }
@@ -252,6 +289,43 @@ void Publisher::publishEstimatorUpdate(
   const okvis::kinematics::Transformation T_WS = state.T_WS;
   const kinematics::Transformation T_SB = T_BS_.inverse();
   const okvis::kinematics::Transformation T_WB = T_WS * T_SB;
+  std_msgs::msg::Header markerHeader;
+  markerHeader.stamp = t;
+  markerHeader.frame_id = "world";
+
+  if (trackingState.recognisedPlace) {
+    const uint64_t triggerId = state.id.value();
+    if (pendingLoopClosureMarkers_.count(triggerId) == 0) {
+      auto previousPoseIt = lastPublishedBodyPoses_.find(triggerId);
+      const okvis::kinematics::Transformation& triggerPose_WB =
+          previousPoseIt != lastPublishedBodyPoses_.end() ? previousPoseIt->second : T_WB;
+      pendingLoopClosureMarkers_.emplace(
+          triggerId,
+          PendingLoopClosureMarker{state.timestamp, triggerPose_WB});
+      pubLoopClosureMarker_.publish(
+          makeArrowMarker(markerHeader, "loop_closure_trigger", state.id, triggerPose_WB,
+                          1.0f, 1.0f, 0.0f));
+    }
+  }
+
+  std::vector<uint64_t> resolvedLoopClosureIds;
+  resolvedLoopClosureIds.reserve(pendingLoopClosureMarkers_.size());
+  for (const auto& pendingLoopClosure : pendingLoopClosureMarkers_) {
+    const StateId pendingStateId(pendingLoopClosure.first);
+    const auto correctedStateIt = updatedStates->find(pendingStateId);
+    if (correctedStateIt == updatedStates->end()) {
+      continue;
+    }
+
+    const okvis::kinematics::Transformation correctedPose_WB = correctedStateIt->second.T_WS * T_SB;
+    pubLoopClosureMarker_.publish(
+        makeArrowMarker(markerHeader, "loop_closure_corrected", pendingStateId,
+                        correctedPose_WB, 0.0f, 1.0f, 0.0f));
+    resolvedLoopClosureIds.push_back(pendingLoopClosure.first);
+  }
+  for (const uint64_t resolvedLoopClosureId : resolvedLoopClosureIds) {
+    pendingLoopClosureMarkers_.erase(resolvedLoopClosureId);
+  }
 
   // publish pose:
   auto poseMsg = std::make_shared<geometry_msgs::msg::TransformStamped>(); // Pose message.
@@ -326,7 +400,11 @@ void Publisher::publishEstimatorUpdate(
     if (publishTf_) {
       pubTransform_.publish(updatedStatePoseMsg);
     }
+
+    lastPublishedBodyPoses_[updatedState.first.value()] = T_WS * T_SB;
   }
+
+  lastPublishedBodyPoses_[state.id.value()] = T_WB;
 
   // update Trajectory object
   std::set<okvis::StateId> affectedStateIds;
@@ -335,70 +413,35 @@ void Publisher::publishEstimatorUpdate(
   trajectory_.update(trackingState, updatedStates, affectedStateIds);
   trajectoryLocked_ = false;
 
-  // now for the path (in segments of 1000 state IDs)
-  auto path = std::make_shared<visualization_msgs::msg::Marker>(); // The path message.
-  path->header.stamp = t;
-  path->header.frame_id = "world";
-  path->ns = "okvis_path";
-  path->type = visualization_msgs::msg::Marker::LINE_STRIP; // Type of object
-  path->action = 0; // 0 add/modify an object, 1 (dprcd), 2 deletes an object, 3 deletes all objects
-  path->pose.position.x = 0.0;
-  path->pose.position.y = 0.0;
-  path->pose.position.z = 0.0;
-  path->pose.orientation.x = 0.0;
-  path->pose.orientation.y = 0.0;
-  path->pose.orientation.z = 0.0;
-  path->pose.orientation.w = 1.0;
-  path->color.r = 0.8;
-  path->color.g = 0.8;
-  path->color.b = 0.0;
-  path->color.a = 1.0;
-  path->scale.x = 0.015;
-  path->lifetime = rclcpp::Duration::from_seconds(0); // 0 for infinity
+  // rebuild the full path as nav_msgs/Path so external tools can style it natively.
+  path_.header.stamp = t;
+  path_.header.frame_id = "world";
+  path_.poses.clear();
 
-  // publish paths as batches of 1000 points.
-  uint64_t firstId = affectedStateIds.begin()->value();
-  uint64_t id = (firstId/1000)*1000;
-  if(id==0) {
-    id = 1;
-  }
-  path->id = (id/1000)*1000;
-  if(path->id != 0) {
-    // link to previous path segment
-    okvis::State state;
-    if(trajectory_.getState(okvis::StateId(path->id-1), state)) {
-      const okvis::kinematics::Transformation T_WB_p = state.T_WS * T_SB;
-      const Eigen::Vector3d& r = T_WB_p.r();
-      geometry_msgs::msg::Point point;
-      point.x = r[0];
-      point.y = r[1];
-      point.z = r[2];
-      path->points.push_back(point);
-    }
-  }
   const uint64_t latestId = updatedStates->rbegin()->first.value();
-  while(id <= latestId) {
-    uint64_t roundedId = (id/1000)*1000;
-    if(path->id != int64_t(roundedId)) {
-      pubPath_.publish(path); // first publish finished segment
-      path->id = roundedId;
-      // ..object ID useful in conjunction with namespace for manipulating&deleting the object later
-      geometry_msgs::msg::Point lastPoint =  path->points.back(); // save last point
-      path->points.clear(); // start new segment
-      path->points.push_back(lastPoint);
+  path_.poses.reserve(static_cast<size_t>(latestId));
+  for (uint64_t id = 1; id <= latestId; ++id) {
+    okvis::State pathState;
+    if (!trajectory_.getState(okvis::StateId(id), pathState)) {
+      continue;
     }
-    okvis::State state;
-    if(!trajectory_.getState(okvis::StateId(id), state)) continue;
-    const okvis::kinematics::Transformation T_WB_p = state.T_WS * T_SB;
-    const Eigen::Vector3d& r = T_WB_p.r();
-    geometry_msgs::msg::Point point;
-    point.x = r[0];
-    point.y = r[1];
-    point.z = r[2];
-    path->points.push_back(point);
-    ++id;
+
+    const okvis::kinematics::Transformation T_WB_p = pathState.T_WS * T_SB;
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.stamp = rclcpp::Time(pathState.timestamp.sec, pathState.timestamp.nsec);
+    pose.header.frame_id = "world";
+    pose.pose.position.x = T_WB_p.r().x();
+    pose.pose.position.y = T_WB_p.r().y();
+    pose.pose.position.z = T_WB_p.r().z();
+    pose.pose.orientation.x = T_WB_p.q().x();
+    pose.pose.orientation.y = T_WB_p.q().y();
+    pose.pose.orientation.z = T_WB_p.q().z();
+    pose.pose.orientation.w = T_WB_p.q().w();
+    path_.poses.push_back(std::move(pose));
   }
-  pubPath_.publish(path); // publish last segment
+
+  auto pathMsg = std::make_shared<nav_msgs::msg::Path>(path_);
+  pubPath_.publish(pathMsg);
 
   // finally the landmarks
   pcl::PointCloud<pcl::PointXYZRGB> pointsMatched; // Point cloud for matched points.
